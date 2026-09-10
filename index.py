@@ -6,59 +6,14 @@ from winrt.windows.ui.notifications.management import (
     UserNotificationListenerAccessStatus,
 )
 
-POLL_SECONDS = 2
-IMPORTANCE_THRESHOLD = 3
-
-# Apps that commonly carry personal communication notifications.
-COMMUNICATION_APPS = {
-    "whatsapp",
-    "telegram",
-    "messenger",
-    "messages",
-    "google messages",
-    "phone",
-    "phone link",
-    "link to windows",
-    "your phone",
-}
-
-# Phone Link can expose Android notifications through Windows.
-PHONE_LINK_APPS = {
-    "phone link",
-    "link to windows",
-    "your phone",
-}
-
-IMPORTANT_KEYWORDS = {
-    "urgent", "important", "emergency", "alert", "warning", "critical",
-    "otp", "verification code", "security code", "login", "sign in",
-    "password", "security", "fraud", "suspicious", "blocked",
-    "payment", "transaction", "debited", "credited", "bank", "upi",
-    "due", "deadline", "appointment", "interview", "meeting", "exam",
-    "assignment", "job", "offer", "delivery", "call", "missed call",
-    "call me", "reminder", "schedule", "flight", "ticket", "booking",
-    "तुरंत", "जरूरी", "महत्वपूर्ण", "ओटीपी", "पेमेंट", "लेनदेन",
-}
-
-STRONG_KEYWORDS = {
-    "otp", "verification code", "security code", "fraud", "suspicious",
-    "emergency", "critical", "urgent", "payment", "transaction",
-    "debited", "credited", "bank", "upi", "missed call", "incoming call",
-}
-
-IGNORE_KEYWORDS = {
-    "download complete",
-    "update available",
-    "suggested for you",
-    "people you may know",
-    "new follower",
-    "new friend suggestion",
-    "promotion",
-    "promoted",
-    "sale",
-    "discount",
-    "advertisement",
-}
+from config import (
+    APP_PRIORITIES,
+    IGNORE_KEYWORDS,
+    IMPORTANT_KEYWORDS,
+    IMPORTANCE_THRESHOLD,
+    POLL_SECONDS,
+    STRONG_KEYWORDS,
+)
 
 
 def extract_text(notification):
@@ -81,29 +36,25 @@ def normalized_name(name):
 
 
 def importance_score(app_name, texts):
-    """Return a transparent importance score; no external AI/API required."""
+    """Calculate a transparent, explainable priority score."""
     app = normalized_name(app_name)
     content = " ".join(texts).lower()
     combined = f"{app} {content}"
-    score = 0
 
-    if any(keyword in combined for keyword in IGNORE_KEYWORDS):
-        score -= 5
+    score = APP_PRIORITIES.get(app, 0)
 
-    if any(keyword in combined for keyword in STRONG_KEYWORDS):
-        score += 5
+    # Strong signals are deliberately powerful because they often indicate
+    # security, financial, or call-related events.
+    strong_matches = [k for k in STRONG_KEYWORDS if k in combined]
+    score += 6 if strong_matches else 0
 
-    score += sum(2 for keyword in IMPORTANT_KEYWORDS if keyword in combined)
+    useful_matches = [k for k in IMPORTANT_KEYWORDS if k in combined]
+    score += min(len(useful_matches), 3) * 2
 
-    if app in COMMUNICATION_APPS:
-        score += 1
+    noise_matches = [k for k in IGNORE_KEYWORDS if k in combined]
+    score -= min(len(noise_matches), 2) * 4
 
-    # Phone Link itself is not automatically important. The mirrored
-    # notification content still has to contain a meaningful signal.
-    if app in PHONE_LINK_APPS:
-        score += 1
-
-    return score
+    return max(score, 0)
 
 
 def is_important(app_name, texts):
@@ -136,12 +87,12 @@ async def main():
     print("✅ Notification access granted!")
     print("🎧 Listening for important notifications...")
     print(f"⏱️ Poll interval: {POLL_SECONDS}s")
+    print(f"🎯 Importance threshold: {IMPORTANCE_THRESHOLD}")
 
     engine = pyttsx3.init()
     engine.setProperty("rate", 175)
 
-    # Existing notifications are seeded into the seen set so they are never
-    # spoken immediately after startup.
+    # Seed existing notifications so startup does not replay old alerts.
     existing = await read_notifications(listener)
     seen_ids = {notification.id for notification in existing}
     print(f"Ignoring {len(seen_ids)} existing notification(s).")
@@ -155,7 +106,6 @@ async def main():
                     continue
 
                 seen_ids.add(notification.id)
-
                 app_name = notification.app_info.display_info.display_name
                 texts = extract_text(notification)
 
@@ -163,6 +113,7 @@ async def main():
                     continue
 
                 score = importance_score(app_name, texts)
+                important = score >= IMPORTANCE_THRESHOLD
 
                 print("\n" + "=" * 60)
                 print("🔔 NEW NOTIFICATION")
@@ -170,7 +121,7 @@ async def main():
                 print("TEXT:", " | ".join(texts))
                 print("SCORE:", score)
 
-                if score >= IMPORTANCE_THRESHOLD:
+                if important:
                     print("🚨 IMPORTANT")
                     speak(engine, app_name, texts)
                 else:
@@ -178,7 +129,6 @@ async def main():
 
                 print("=" * 60)
 
-            # Keep memory bounded if Windows notification history grows large.
             if len(seen_ids) > 5000:
                 seen_ids = {notification.id for notification in notifications}
 
