@@ -1,17 +1,22 @@
+import asyncio
 import threading
-import tkinter as tk
 
 from index import main as notification_main
 from ui import NotificationDashboard
 
 
-def run_reader():
-    """Run the existing notification engine without blocking the UI."""
-    import asyncio
-    asyncio.run(notification_main())
+def run_reader(app):
+    """Run the notification engine without blocking Tkinter."""
+    asyncio.run(
+        notification_main(
+            on_notification=app.on_notification,
+            get_settings=app.settings,
+        )
+    )
 
 
 if __name__ == "__main__":
     app = NotificationDashboard()
-    threading.Thread(target=run_reader, daemon=True).start()
+    reader_thread = threading.Thread(target=run_reader, args=(app,), daemon=True)
+    reader_thread.start()
     app.mainloop()
