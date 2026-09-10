@@ -9,24 +9,24 @@ A Python-based Windows notification reader that speaks **only important notifica
 - Monitors for new notifications continuously.
 - Deduplicates notifications by notification ID.
 - Extracts source application and notification text.
-- Uses a transparent rule-based importance score.
+- Uses a transparent, configurable rule-based importance score.
 - Recognizes Phone Link / Link to Windows as a notification source.
-- Gives communication apps a small priority boost without automatically reading every message.
+- Gives communication apps a priority boost without automatically reading every message.
 - Speaks important notifications using local text-to-speech through `pyttsx3`.
 - Keeps non-important and promotional notifications silent.
 
 ## Phone Link support
 
-If Android notifications are mirrored to Windows through **Phone Link**, the reader evaluates the notification that Windows exposes.
+If Android notifications are mirrored to Windows through **Phone Link**, the reader evaluates the notification that Windows exposes. It does not connect directly to the phone.
 
 Examples:
 
 ```text
 Phone Link + missed call
-→ IMPORTANT → read aloud
+→ HIGH PRIORITY → read aloud
 
 Phone Link + OTP / payment / security alert
-→ IMPORTANT → read aloud
+→ HIGH PRIORITY → read aloud
 
 Phone Link + ordinary chat message
 → usually silent unless it contains an importance signal
@@ -35,26 +35,27 @@ Phone Link + promotional notification
 → silent
 ```
 
-The project does not directly connect to the phone. It reads notifications that are already available to the Windows notification system.
-
-## How importance works
+## Importance scoring
 
 The classifier is intentionally transparent and local — no external AI/API is required.
 
-- Strong signals such as OTP/security codes, fraud warnings, payments/transactions, emergencies, urgent alerts and missed calls get a high score.
-- Important words such as meeting, deadline, interview, job, delivery or reminder add score.
-- Communication apps such as WhatsApp, Telegram, Messages and Phone Link receive a small priority boost.
+- Strong signals such as OTP/security codes, fraud warnings, payments/transactions, emergencies, urgent alerts and missed calls receive a large score boost.
+- Context signals such as meeting, deadline, interview, job, delivery or reminder add points.
+- WhatsApp, Telegram, Messages, Phone Link, Calendar and email apps have configurable app priorities.
 - Promotional/noise phrases such as sales, discounts, suggested friends and download-complete messages are penalized.
-- A notification is spoken only when its final score reaches the configured threshold.
+- A notification is spoken only when its final score reaches `IMPORTANCE_THRESHOLD`.
 
-You can customize the rules in `index.py` using:
+Rules live in **`config.py`**, so you can tune the project without touching the listener logic.
 
-- `COMMUNICATION_APPS`
-- `PHONE_LINK_APPS`
-- `IMPORTANT_KEYWORDS`
-- `STRONG_KEYWORDS`
-- `IGNORE_KEYWORDS`
-- `IMPORTANCE_THRESHOLD`
+## Project structure
+
+```text
+Notification-Reader/
+├── index.py        # Windows listener, scoring pipeline and TTS
+├── config.py       # App priorities and scoring rules
+├── requirements.txt
+└── README.md
+```
 
 ## Requirements
 
@@ -89,7 +90,7 @@ Press `Ctrl+C` to stop the reader.
 🔔 NEW NOTIFICATION
 APP: Phone Link
 TEXT: Missed call from Rahul
-SCORE: 8
+SCORE: 11
 🚨 IMPORTANT
 🔊 SPEAKING: Important notification from Phone Link. Missed call from Rahul
 ```
@@ -100,15 +101,15 @@ For an ordinary notification:
 🔔 NEW NOTIFICATION
 APP: Chrome
 TEXT: Download complete
-SCORE: -5
+SCORE: 0
 ℹ️ Not important — silent
 ```
 
 ## Roadmap
 
 - SQLite notification history
-- Per-app priority profiles
+- Privacy mode for sensitive notifications
+- Per-contact priority profiles
 - Better natural-language importance scoring
 - Background startup with Windows
-- Optional desktop UI
-- Optional allow-list for specific contacts
+- Optional desktop dashboard
