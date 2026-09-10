@@ -1,5 +1,4 @@
 import asyncio
-import time
 
 import pyttsx3
 from winrt.windows.ui.notifications.management import (
@@ -8,8 +7,28 @@ from winrt.windows.ui.notifications.management import (
 )
 
 POLL_SECONDS = 2
+IMPORTANCE_THRESHOLD = 3
 
-# Notifications containing these terms are treated as important.
+# Apps that commonly carry personal communication notifications.
+COMMUNICATION_APPS = {
+    "whatsapp",
+    "telegram",
+    "messenger",
+    "messages",
+    "google messages",
+    "phone",
+    "phone link",
+    "link to windows",
+    "your phone",
+}
+
+# Phone Link can expose Android notifications through Windows.
+PHONE_LINK_APPS = {
+    "phone link",
+    "link to windows",
+    "your phone",
+}
+
 IMPORTANT_KEYWORDS = {
     "urgent", "important", "emergency", "alert", "warning", "critical",
     "otp", "verification code", "security code", "login", "sign in",
@@ -17,13 +36,33 @@ IMPORTANT_KEYWORDS = {
     "payment", "transaction", "debited", "credited", "bank", "upi",
     "due", "deadline", "appointment", "interview", "meeting", "exam",
     "assignment", "job", "offer", "delivery", "call", "missed call",
-    "reminder", "schedule", "flight", "ticket", "booking",
+    "call me", "reminder", "schedule", "flight", "ticket", "booking",
     "तुरंत", "जरूरी", "महत्वपूर्ण", "ओटीपी", "पेमेंट", "लेनदेन",
+}
+
+STRONG_KEYWORDS = {
+    "otp", "verification code", "security code", "fraud", "suspicious",
+    "emergency", "critical", "urgent", "payment", "transaction",
+    "debited", "credited", "bank", "upi", "missed call", "incoming call",
+}
+
+IGNORE_KEYWORDS = {
+    "download complete",
+    "update available",
+    "suggested for you",
+    "people you may know",
+    "new follower",
+    "new friend suggestion",
+    "promotion",
+    "promoted",
+    "sale",
+    "discount",
+    "advertisement",
 }
 
 
 def extract_text(notification):
-    """Return notification text as a list of strings."""
+    """Return notification text as a list of non-empty strings."""
     toast = notification.notification
     binding = toast.visual.get_binding("ToastGeneric")
 
@@ -37,21 +76,38 @@ def extract_text(notification):
     ]
 
 
+def normalized_name(name):
+    return " ".join(name.lower().split())
+
+
+def importance_score(app_name, texts):
+    """Return a transparent importance score; no external AI/API required."""
+    app = normalized_name(app_name)
+    content = " ".join(texts).lower()
+    combined = f"{app} {content}"
+    score = 0
+
+    if any(keyword in combined for keyword in IGNORE_KEYWORDS):
+        score -= 5
+
+    if any(keyword in combined for keyword in STRONG_KEYWORDS):
+        score += 5
+
+    score += sum(2 for keyword in IMPORTANT_KEYWORDS if keyword in combined)
+
+    if app in COMMUNICATION_APPS:
+        score += 1
+
+    # Phone Link itself is not automatically important. The mirrored
+    # notification content still has to contain a meaningful signal.
+    if app in PHONE_LINK_APPS:
+        score += 1
+
+    return score
+
+
 def is_important(app_name, texts):
-    """Simple transparent importance classifier; no external AI/API required."""
-    content = f"{app_name} {' '.join(texts)}".lower()
-
-    # Strong signals get priority.
-    strong_keywords = {
-        "otp", "verification code", "security code", "fraud", "suspicious",
-        "emergency", "critical", "urgent", "payment", "transaction",
-        "debited", "credited", "bank", "upi", "missed call",
-    }
-    if any(keyword in content for keyword in strong_keywords):
-        return True
-
-    matches = sum(keyword in content for keyword in IMPORTANT_KEYWORDS)
-    return matches >= 2
+    return importance_score(app_name, texts) >= IMPORTANCE_THRESHOLD
 
 
 def speak(engine, app_name, texts):
@@ -63,7 +119,7 @@ def speak(engine, app_name, texts):
 
 
 async def read_notifications(listener):
-    """Fetch the current toast notifications."""
+    """Fetch the current Windows toast notifications."""
     return await listener.get_notifications_async(1)  # 1 = Toast
 
 
@@ -84,7 +140,8 @@ async def main():
     engine = pyttsx3.init()
     engine.setProperty("rate", 175)
 
-    # Seed with existing notifications so old notifications are never spoken.
+    # Existing notifications are seeded into the seen set so they are never
+    # spoken immediately after startup.
     existing = await read_notifications(listener)
     seen_ids = {notification.id for notification in existing}
     print(f"Ignoring {len(seen_ids)} existing notification(s).")
@@ -105,12 +162,15 @@ async def main():
                 if not texts:
                     continue
 
+                score = importance_score(app_name, texts)
+
                 print("\n" + "=" * 60)
                 print("🔔 NEW NOTIFICATION")
                 print("APP:", app_name)
                 print("TEXT:", " | ".join(texts))
+                print("SCORE:", score)
 
-                if is_important(app_name, texts):
+                if score >= IMPORTANCE_THRESHOLD:
                     print("🚨 IMPORTANT")
                     speak(engine, app_name, texts)
                 else:
